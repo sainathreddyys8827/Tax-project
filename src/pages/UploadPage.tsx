@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { cn } from "@/lib/utils";
+import { parseStatementCsv, analyzeStatement } from "@/lib/statementAnalyzer";
 
 const sampleData = [
   { date: "2024-04-05", description: "LIC Premium Payment", amount: "15000", category: "80C" },
@@ -63,98 +64,26 @@ export default function UploadPage() {
     setCompletedSteps([]);
 
     try {
-      // Step 1: Create dummy user
-      setCurrentStep(0);
-      const userRes = await fetch("http://localhost:5001/api/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Demo User", email: `demo+${Date.now()}@example.com`, pan: "ABCDE1234F" })
-      });
-      const userData = await userRes.json();
-      const userId = userData.data.user_id;
-      setCompletedSteps((p) => [...p, 0]);
-
-      // Step 2 & 3: Upload file
-      setCurrentStep(1);
       if (!file) throw new Error("No file selected.");
-      const activeFile = file;
-
-      const formData = new FormData();
-      formData.append("file", activeFile);
-      formData.append("user_id", userId);
-
-      const uploadRes = await fetch("http://localhost:5001/api/uploads", {
-        method: "POST",
-        body: formData
-      });
-      if (!uploadRes.ok) {
-        const uploadErr = await uploadRes.json().catch(() => ({}));
-        throw new Error(uploadErr?.message || `Upload failed with status ${uploadRes.status}`);
-      }
-      setCompletedSteps((p) => [...p, 1, 2]);
-
-      // Step 4 & 5: Tax Analysis Engine
+      const text = await file.text();
+      setCompletedSteps([0]);
+      setCurrentStep(1);
+      const txns = parseStatementCsv(text);
+      setCompletedSteps([0, 1, 2]);
       setCurrentStep(3);
-      const savedProfile = localStorage.getItem("taxProfileData");
-      let parsedProfile: any = null;
-      if (savedProfile) {
-        try { parsedProfile = JSON.parse(savedProfile); } catch (e) {}
-      }
-
-      const requestBody: any = { user_id: userId, financial_year: "2024-25" };
-      if (parsedProfile?.salary) {
-        requestBody.salary_profile = {
-          ...parsedProfile.salary,
-          annual_basic: parsedProfile.salary.annualBasic ?? parsedProfile.salary.annual_basic,
-          monthly_basic: parsedProfile.salary.monthlyBasic ?? parsedProfile.salary.monthly_basic,
-          annual_hra: parsedProfile.salary.annualHRA ?? parsedProfile.salary.annualHra ?? parsedProfile.salary.annual_hra,
-          monthly_hra: parsedProfile.salary.monthlyHRA ?? parsedProfile.salary.monthlyHra ?? parsedProfile.salary.monthly_hra,
-          annual_rent: parsedProfile.salary.annualRent ?? parsedProfile.salary.annual_rent,
-          monthly_rent: parsedProfile.salary.monthlyRent ?? parsedProfile.salary.monthly_rent,
-          annual_other_income: parsedProfile.salary.annualOtherIncome ?? parsedProfile.salary.annual_other_income,
-          is_metro: parsedProfile.salary.isMetro ?? parsedProfile.salary.is_metro ?? true,
-        };
-      }
-      if (parsedProfile?.section80d) {
-        requestBody.section_80d_profile = {
-          ...parsedProfile.section80d,
-          self_spouse_insurance: parsedProfile.section80d.selfSpouseInsurance ?? parsedProfile.section80d.self_spouse_insurance,
-          children_insurance: parsedProfile.section80d.childrenInsurance ?? parsedProfile.section80d.children_insurance,
-          parents_insurance: parsedProfile.section80d.parentsInsurance ?? parsedProfile.section80d.parents_insurance,
-          is_self_senior: parsedProfile.section80d.isSelfSenior ?? parsedProfile.section80d.is_self_senior,
-          is_parents_senior: parsedProfile.section80d.isParentsSenior ?? parsedProfile.section80d.is_parents_senior,
-          preventive_checkup: parsedProfile.section80d.preventiveCheckup ?? parsedProfile.section80d.preventive_checkup,
-          self_medical_exp: parsedProfile.section80d.selfMedicalExp ?? parsedProfile.section80d.self_medical_exp,
-          parents_medical_exp: parsedProfile.section80d.parentsMedicalExp ?? parsedProfile.section80d.parents_medical_exp,
-        };
-      }
-      if (parsedProfile?.regime) {
-        requestBody.selected_regime = parsedProfile.regime;
-      }
-
-      const analysisRes = await fetch("http://localhost:5001/api/tax/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody)
-      });
-      const analysisData = await analysisRes.json();
-      if (!analysisRes.ok) {
-        throw new Error(analysisData?.message || `Tax analysis failed with status ${analysisRes.status}`);
-      }
-      setCompletedSteps((p) => [...p, 3, 4]);
-
-      // Step 6: Finalize
+      let savedProfile: any = null;
+      try { savedProfile = JSON.parse(localStorage.getItem("taxProfileData") || "null"); } catch (e) {}
+      const result = analyzeStatement(txns, savedProfile);
+      setCompletedSteps([0, 1, 2, 3, 4]);
       setCurrentStep(5);
       await new Promise((r) => setTimeout(r, 400));
-      setCompletedSteps((p) => [...p, 5]);
-
-      // Store results in localStorage so Dashboard can pick it up
-      localStorage.setItem("taxAnalysisData", JSON.stringify(analysisData.data));
+      setCompletedSteps([0, 1, 2, 3, 4, 5]);
+      localStorage.setItem("taxAnalysisData", JSON.stringify(result));
       navigate("/dashboard");
 
     } catch (err: any) {
       console.error(err);
-      alert(err?.message || "Failed to process the bank statement. Ensure backend is running.");
+      alert(err?.message || "Failed to process the bank statement.");
       setIsProcessing(false);
     }
   };
